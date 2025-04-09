@@ -13,22 +13,22 @@ class ConversationBlocks(BaseModel):
 class RequestPayLoad(BaseModel):
     model: str
     messages: list[dict[str, str]]
-    stream: bool = True
+    stream: bool
     max_tokens: int
     temperature: float
 
 
 class RequestContent(BaseModel):
     type: str
-    text: str | None
+    text: str | None = None
 
 
 class RequestDelta(BaseModel):
-    text: str | None
-    content: list[RequestContent] | None
+    text: str | None = None
+    content: list[RequestContent] | None = None
 
 
 class RequestStreamData(BaseModel):
-    type: str
-    delta: RequestDelta | None
-    content: list[RequestContent] | None
+    type: str | None = None
+    delta: RequestDelta | None = None
+    content: list[RequestContent] | None = None

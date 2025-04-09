@@ -13,6 +13,8 @@ from .data_models import RequestPayLoad, RequestStreamData
 from .conversation import Conversation
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+logger.addHandler(logging.StreamHandler())
 
 
 class LLMBaseModel(ABC):
@@ -36,9 +38,10 @@ class LLMBaseModel(ABC):
 class ClaudeModel(LLMBaseModel):
     def __init__(self, api_key: str, model_id: str) -> None:
         super().__init__(api_key, model_id)
-        self.api_url = "https://api.anthropic.com/v1/message"
+        self.api_url = "https://api.anthropic.com/v1/messages"
         self.max_tokens = 5000
-        self.temperature = 0.5
+        self.temperature = 0.7
+        self.stream = True
         self.header = {
             "x-api-key": self.api_key,
             "content-type": "application/json",
@@ -49,12 +52,14 @@ class ClaudeModel(LLMBaseModel):
         data = RequestPayLoad(
             model=self.model_id,
             messages=conversation.consolidate_msg_for_api(),
-            stream=True,
+            stream=self.stream,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
-        )
-        response = requests.post(self.api_url, headers=self.header, json=data, stream=True)
+        ).model_dump()
+
+        response = requests.post(self.api_url, headers=self.header, json=data)
         super().check_api_status(response)
+
         return self._stream_response(response)
 
     def _stream_response(self, response: requests.Response) -> str:
@@ -70,27 +75,26 @@ class ClaudeModel(LLMBaseModel):
 
     def _parse_stream_response(self, response: requests.Response) -> Generator[str, None, None]:
         for line in response.iter_lines():
+            # logger.debug(f"{line=}")
             if not line:
                 continue
 
-            # Decode the line
             line_text = line.decode("utf-8")
             if not line_text.startswith("data: "):
                 continue
 
             line_data = line_text[6:]  # Remove the "data: " prefix
 
-            # Skip the [DONE] message
             if line_data == "[DONE]":
                 continue
 
             try:
-                # Parse the JSON data
                 chunk_data = json.loads(line_data)
+                # logger.debug(f"{chunk_data=}")
 
-                # Try to validate with Pydantic model
                 try:
                     chunk = RequestStreamData.model_validate(chunk_data)
+                    # logger.info(f"{chunk=}")
                 except Exception:
                     # Fall back to direct dictionary access if model validation fails
                     chunk = chunk_data
@@ -99,8 +103,11 @@ class ClaudeModel(LLMBaseModel):
                 if getattr(chunk, "type", None) == "content_block_delta" and getattr(chunk, "delta", None):
                     delta = chunk.delta
                     if hasattr(delta, "text") and delta.text:
+                        # logger.debug(f"{delta=}")
                         yield delta.text
+
                     elif isinstance(delta, dict) and "text" in delta:
+                        # logger.debug(f"{delta=}")
                         yield delta["text"]
 
                 # Handle message deltas for newer Claude API versions
@@ -109,6 +116,7 @@ class ClaudeModel(LLMBaseModel):
                         for content_block in chunk.delta.content or []:
                             if getattr(content_block, "type", None) == "text" and getattr(content_block, "text", None):
                                 yield content_block.text
+
                     elif isinstance(chunk, dict) and "delta" in chunk and "content" in chunk["delta"]:
                         for content_block in chunk["delta"]["content"]:
                             if content_block.get("type") == "text" and "text" in content_block:
